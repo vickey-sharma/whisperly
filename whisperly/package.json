@@ -9,9 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^7.9.22",
+    "bcryptjs": "^3.0.3",
+    "email": "^0.2.7",
     "mongoose": "^9.11.4",
     "next": "16.4.3",
-    "react": "19.3.0",
+    "react": "^19.3.0",
     "react-dom": "19.3.0",
     "zod": "^4.6.7"
   },

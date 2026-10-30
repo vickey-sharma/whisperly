@@ -1,84 +1,99 @@
-import { auth, clerkClient } from '@clerk/nextjs/server';
-import { NextResponse } from 'next/server';
-import dbConnect from '@/src/lib/dbConnect';
-import UserModel from '@/src/model/User';
-import { usernameValidation } from '@/src/schemas/signUpSchema';
+import dbConnect from "@/src/lib/dbConnect";
+import UserModel from "@/src/model/User";
+import bcrypt from "bcryptjs";
 
-export async function POST() {
+import { sendVerificationEmail } from "@/src/helpers/sendVerificationEmail";
+
+export async function POST(request: Request) {
+  await dbConnect();
+
   try {
-    const { userId } = await auth();
+    const { username, email, password } = await request.json();
 
-    if (!userId) {
-      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
-    }
-
-    const client = await clerkClient();
-    const clerkUser = await client.users.getUser(userId);
-    const primaryEmail = clerkUser.emailAddresses.find(
-      (address) => address.id === clerkUser.primaryEmailAddressId,
-    );
-
-    if (!primaryEmail || primaryEmail.verification?.status !== 'verified') {
-      return NextResponse.json(
-        { message: 'Verify your email before continuing.' },
-        { status: 403 },
-      );
-    }
-
-    const usernameResult = usernameValidation.safeParse(clerkUser.username);
-    if (!usernameResult.success || !clerkUser.username) {
-      return NextResponse.json(
-        { message: 'A valid username is required.' },
-        { status: 400 },
-      );
-    }
-
-    await dbConnect();
-
-    const existingUser = await UserModel.findOne({ clerkId: userId });
-    if (existingUser) {
-      return NextResponse.json({ message: 'User profile is ready.' });
-    }
-
-    const conflictingUser = await UserModel.findOne({
-      $or: [
-        { email: primaryEmail.emailAddress },
-        { username: clerkUser.username },
-      ],
-    });
-
-    if (conflictingUser) {
-      return NextResponse.json(
-        { message: 'Email or username is already in use.' },
-        { status: 409 },
-      );
-    }
-
-    await UserModel.create({
-      clerkId: userId,
-      username: clerkUser.username,
-      email: primaryEmail.emailAddress,
+    const existingVerifiedUserByUsername = await UserModel.findOne({
+      username,
       isVerified: true,
     });
 
-    return NextResponse.json({ message: 'User profile created.' }, { status: 201 });
-  } catch (error) {
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      error.code === 11000
-    ) {
-      return NextResponse.json(
-        { message: 'Email or username is already in use.' },
-        { status: 409 },
+    if (existingVerifiedUserByUsername) {
+      return Response.json(
+        {
+          success: false,
+          message: 'Username is already taken',
+        },
+        { status: 400 }
       );
     }
 
-    console.error('Signup profile sync failed:', error);
-    return NextResponse.json(
-      { message: 'Could not finish signup.' },
-      { status: 500 },
+    const existingUserByEmail = await UserModel.findOne({ email });
+    let verifyCode = Math.floor(100000 + Math.random() * 900000).toString();
+
+    if (existingUserByEmail) {
+      if (existingUserByEmail.isVerified) {
+        return Response.json(
+          {
+            success: false,
+            message: 'User already exists with this email',
+          },
+          { status: 400 }
+        );
+      } else {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        existingUserByEmail.password = hashedPassword;
+        existingUserByEmail.verifyCode = verifyCode;
+        existingUserByEmail.verifyCodeExpiry = new Date(Date.now() + 3600000);
+        await existingUserByEmail.save();
+      }
+    } else {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const expiryDate = new Date();
+      expiryDate.setHours(expiryDate.getHours() + 1);
+
+      const newUser = new UserModel({
+        username,
+        email,
+        password: hashedPassword,
+        verifyCode,
+        verifyCodeExpiry: expiryDate,
+        isVerified: false,
+        isAcceptingMessages: true,
+        messages: [],
+      });
+
+      await newUser.save();
+    }
+
+    // Send verification email
+    const emailResponse = await sendVerificationEmail(
+      email,
+      username,
+      verifyCode
+    );
+    if (!emailResponse.success) {
+      return Response.json(
+        {
+          success: false,
+          message: emailResponse.message,
+        },
+        { status: 500 }
+      );
+    }
+
+    return Response.json(
+      {
+        success: true,
+        message: 'User registered successfully. Please verify your account.',
+      },
+      { status: 201 }
+    );
+  } catch (error) {
+    console.error('Error registering user:', error);
+    return Response.json(
+      {
+        success: false,
+        message: 'Error registering user',
+      },
+      { status: 500 }
     );
   }
 }

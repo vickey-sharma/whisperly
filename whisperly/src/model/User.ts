@@ -19,18 +19,22 @@ const MessageSchema: Schema<Message> = new mongoose.Schema({
 });
 
 export interface User extends Document {
+  clerkId: string;
   username: string;
   email: string;
-  password: string;
-  verifyCode: string;
-  verifyCodeExpiry: Date; 
   isVerified: boolean;
   isAcceptingMessages: boolean;
   messages: Message[];
 }
 
-// Updated User schema
+// Clerk owns passwords and email OTP verification; MongoDB stores the app profile and messages.
 const UserSchema: Schema<User> = new mongoose.Schema({
+  clerkId: {
+    type: String,
+    required: true,
+    unique: true,
+    sparse: true,
+  },
   username: {
     type: String,
     required: [true, 'Username is required'],
@@ -43,21 +47,9 @@ const UserSchema: Schema<User> = new mongoose.Schema({
     unique: true,
     match: [/.+\@.+\..+/, 'Please use a valid email address'],
   },
-  password: {
-    type: String,
-    required: [true, 'Password is required'],
-  },
-  verifyCode: {
-    type: String,
-    required: [true, 'Verify Code is required'],
-  },
-  verifyCodeExpiry: {
-    type: Date,
-    required: [true, 'Verify Code Expiry is required'],
-  },
   isVerified: {
     type: Boolean,
-    default: false,
+    default: true,
   },
   isAcceptingMessages: {
     type: Boolean,
